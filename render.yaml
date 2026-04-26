@@ -43,10 +43,10 @@ services:
         value: "Litsey 131"
 
   # ── Frontend (статика Flutter web) ──────────────────────────────────────
+  # Static Sites у Render всегда бесплатные и глобальные — без plan и region.
   - type: web
     name: likray-frontend
     runtime: static
-    plan: free
     rootDir: frontend
     # build/web уже закоммичен в репо — Render-у достаточно опубликовать его.
     buildCommand: echo "using pre-built bundle in build/web"
