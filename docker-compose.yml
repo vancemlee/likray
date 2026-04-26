@@ -1,0 +1,30 @@
+services:
+  backend:
+    build: ./backend
+    image: likray-backend:latest
+    container_name: likray-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Сгенерировать вне контейнера: python -c "import secrets; print(secrets.token_hex(32))"
+      # Если оставить пустым — entrypoint сгенерирует одноразовый ключ.
+      SECRET_KEY: "${SECRET_KEY:-}"
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      DATABASE_URL: "sqlite:////data/likray.db"
+      # Bootstrap-учётка (создаётся однократно при пустой БД).
+      LIKRAY_ADMIN_USERNAME: "${LIKRAY_ADMIN_USERNAME:-admin}"
+      LIKRAY_ADMIN_PASSWORD: "${LIKRAY_ADMIN_PASSWORD:-admin}"
+      LIKRAY_ADMIN_FULL_NAME: "${LIKRAY_ADMIN_FULL_NAME:-Default Admin}"
+      LIKRAY_SCHOOL_NAME: "${LIKRAY_SCHOOL_NAME:-Demo School}"
+    volumes:
+      - likray-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  likray-data:

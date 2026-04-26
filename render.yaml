@@ -1,0 +1,75 @@
+# Render Blueprint для Likray.
+#
+# Один Web Service (FastAPI/uvicorn в Docker) + Static Site (Flutter web bundle).
+# Static Site проксирует /api/* на backend через rewrite — фронт обращается
+# по относительному пути и не знает абсолютного URL бэкенда.
+#
+# База данных: ephemeral SQLite внутри контейнера. Render Free Web Service
+# не даёт постоянного диска, поэтому при рестарте инстанса данные сбрасываются.
+# При cold start docker-entrypoint пересоздаёт админа из ENV переменных —
+# приложение всегда поднимается в рабочем состоянии. Для production-данных
+# нужно поднять Postgres сервис и заменить DATABASE_URL.
+
+services:
+  # ── Backend ─────────────────────────────────────────────────────────────
+  - type: web
+    name: likray-backend
+    runtime: docker
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: DATABASE_URL
+        # Внутри контейнера, без диска — данные не переживают рестарт.
+        value: sqlite:////app/likray.db
+      - key: LIKRAY_ADMIN_USERNAME
+        value: admin
+      - key: LIKRAY_ADMIN_PASSWORD
+        # Render не позволяет хранить юникод в plain value через blueprint —
+        # значение можно поменять в дашборде после первого деплоя.
+        sync: false
+      - key: LIKRAY_ADMIN_FULL_NAME
+        value: "Default Admin"
+      - key: LIKRAY_SCHOOL_NAME
+        value: "Litsey 131"
+
+  # ── Frontend (статика Flutter web) ──────────────────────────────────────
+  - type: web
+    name: likray-frontend
+    runtime: static
+    plan: free
+    rootDir: frontend
+    # build/web уже закоммичен в репо — Render-у достаточно опубликовать его.
+    buildCommand: echo "using pre-built bundle in build/web"
+    staticPublishPath: ./build/web
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /flutter_service_worker.js
+        name: Cache-Control
+        value: no-store, no-cache, must-revalidate, max-age=0
+      - path: /index.html
+        name: Cache-Control
+        value: no-store, no-cache, must-revalidate, max-age=0
+      - path: /main.dart.js
+        name: Cache-Control
+        value: no-store, no-cache, must-revalidate, max-age=0
+    routes:
+      # Прокси /api/* на backend.
+      # likray-backend — фиксированное имя из этого blueprint;
+      # если оно занято в аккаунте, Render добавит суффикс — тогда поправить вручную.
+      - type: rewrite
+        source: /api/*
+        destination: https://likray-backend.onrender.com/api/*
+      # Любой не-API путь отдаём через index.html (SPA-fallback для go_router path-strategy).
+      - type: rewrite
+        source: /*
+        destination: /index.html
