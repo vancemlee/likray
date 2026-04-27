@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/api/api_exceptions.dart';
+import '../../data/admin_repository.dart';
 import '../providers/admin_providers.dart';
 
 /// Экран логина администратора.
@@ -30,6 +31,24 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
     super.dispose();
   }
 
+  /// Маппинг ApiException → текст для пользователя.
+  /// 401 → «неверные креды»; network → «нет связи»; всё прочее — как пришло с сервера.
+  String _humanError(Object? err) {
+    if (err is ApiException) {
+      if (err.code == kInvalidCredentials || err.statusCode == 401) {
+        return 'Неверный логин или пароль.';
+      }
+      if (err.code == kNetworkError) {
+        return 'Не удалось связаться с сервером. Проверь интернет.';
+      }
+      if (err.statusCode != null && err.statusCode! >= 500) {
+        return 'Ошибка сервера, попробуй позже.';
+      }
+      return err.message;
+    }
+    return 'Ошибка входа: $err';
+  }
+
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
@@ -38,35 +57,34 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
       _errorMessage = null;
     });
 
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref.read(adminLoginProvider.notifier).login(
-            _usernameController.text.trim(),
-            _passwordController.text,
-          );
+      // Идём напрямую через репозиторий, чтобы исключение прокидывалось
+      // в screen без autoDispose-перезагрузки notifier'а.
+      final repo = ref.read(adminRepositoryProvider);
+      final result = await repo.login(
+        _usernameController.text.trim(),
+        _passwordController.text,
+      );
+      await ref.read(authNotifierProvider.notifier).setToken(result.accessToken);
 
-      // Проверяем что логин прошёл успешно
-      final loginState = ref.read(adminLoginProvider);
-      if (loginState is AsyncError) {
-        throw loginState.error;
-      }
-
-      if (mounted) {
-        context.go('/admin');
-      }
-    } on ApiException catch (e) {
-      setState(() {
-        _errorMessage = e.code == kInvalidCredentials
-            ? 'Неверный логин или пароль.'
-            : e.message;
-      });
-    } catch (_) {
-      setState(() {
-        _errorMessage = 'Ошибка входа. Проверьте подключение к серверу.';
-      });
+      if (mounted) context.go('/admin');
+    } catch (e) {
+      final msg = _humanError(e);
+      if (!mounted) return;
+      setState(() => _errorMessage = msg);
+      // Дублируем в SnackBar — inline-ошибка может ускользнуть от взгляда.
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          key: const Key('login_error_snack'),
+          content: Text(msg),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          duration: const Duration(seconds: 4),
+        ),
+      );
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
