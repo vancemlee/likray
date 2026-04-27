@@ -37,11 +37,14 @@ def main() -> int:
     from app.models import Admin, AdminRole, School
     from app.security import hash_password, verify_password
 
-    username  = os.environ.get("LIKRAY_ADMIN_USERNAME",  "admin")
-    password  = os.environ.get("LIKRAY_ADMIN_PASSWORD",  "admin")
-    full_name = os.environ.get("LIKRAY_ADMIN_FULL_NAME", "Default Admin")
-    school    = os.environ.get("LIKRAY_SCHOOL_NAME",     "Demo School")
-    db_url    = os.environ["DATABASE_URL"]
+    # Env-значения strip'аем: Render Dashboard сохраняет введённое поле вместе
+    # с trailing-newline, если пользователь нажал Enter перед "Save", а
+    # пароль с \n в HTML-форме потом не ввести — получается вечный 401.
+    username  = os.environ.get("LIKRAY_ADMIN_USERNAME",  "admin").strip()
+    password  = os.environ.get("LIKRAY_ADMIN_PASSWORD",  "admin").strip()
+    full_name = os.environ.get("LIKRAY_ADMIN_FULL_NAME", "Default Admin").strip()
+    school    = os.environ.get("LIKRAY_SCHOOL_NAME",     "Demo School").strip()
+    db_url    = os.environ["DATABASE_URL"].strip()
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
