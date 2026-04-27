@@ -1,16 +1,22 @@
-"""Bootstrap admin if missing.
+"""Bootstrap or refresh admin from environment variables.
 
-Читает креды из переменных окружения (никаких интерполяций в исходник —
-именно из-за них предыдущая версия entrypoint ломалась на спецсимволах
-и CRLF-окончаниях):
+Читает креды из ENV (никаких интерполяций в исходник):
 
     LIKRAY_ADMIN_USERNAME       (default: "admin")
     LIKRAY_ADMIN_PASSWORD       (default: "admin")
     LIKRAY_ADMIN_FULL_NAME      (default: "Default Admin")
     LIKRAY_SCHOOL_NAME          (default: "Demo School")
-    DATABASE_URL                (берётся из env, если задан)
+    DATABASE_URL                (берётся из env)
 
-Идемпотентен: если админ с таким username уже существует, выходит без изменений.
+Поведение:
+    * нет админа с таким username        → создаётся через cli.create_superadmin
+    * админ есть и пароль уже совпадает  → пропуск
+    * админ есть, но пароль НЕ совпадает → обновляется password_hash, full_name
+                                          и school переподвязывается
+
+То есть после правки `LIKRAY_ADMIN_PASSWORD` в Render Environment и редеплоя
+контейнера логин начнёт работать с новым паролем -- независимо от того,
+сохранилась ли БД (Postgres) или была сброшена (ephemeral SQLite).
 """
 from __future__ import annotations
 
@@ -19,7 +25,6 @@ import sys
 
 
 def main() -> int:
-    # Гарантируем минимально необходимые переменные для импорта app.* модулей.
     os.environ.setdefault("DATABASE_URL", "sqlite:///./likray.db")
     os.environ.setdefault("SECRET_KEY", "change-me")
     os.environ.setdefault("ALGORITHM", "HS256")
@@ -29,7 +34,8 @@ def main() -> int:
     from sqlalchemy.orm import sessionmaker
 
     from app.db import Base
-    from app.models import Admin
+    from app.models import Admin, AdminRole, School
+    from app.security import hash_password, verify_password
 
     username  = os.environ.get("LIKRAY_ADMIN_USERNAME",  "admin")
     password  = os.environ.get("LIKRAY_ADMIN_PASSWORD",  "admin")
@@ -43,24 +49,33 @@ def main() -> int:
     db = SessionLocal()
     try:
         existing = db.query(Admin).filter(Admin.username == username).first()
-        if existing is not None:
-            print(f"[bootstrap] admin '{username}' already exists -- skip")
+        if existing is None:
+            from cli import create_superadmin
+            create_superadmin(
+                db_url=db_url,
+                school_name=school,
+                username=username,
+                password=password,
+                full_name=full_name,
+            )
+            print(f"[bootstrap] created superadmin '{username}'")
             return 0
+
+        # Админ уже есть -- проверяем пароль и при необходимости обновляем.
+        if verify_password(password, existing.password_hash):
+            print(f"[bootstrap] admin '{username}' password matches env -- skip")
+            return 0
+
+        # Пароль изменился: обновляем hash + full_name (могло измениться).
+        existing.password_hash = hash_password(password)
+        existing.full_name = full_name
+        # Школу не двигаем -- если имя школы поменяли, пусть остаётся прежняя
+        # привязка, иначе случайный rename сломает FK у access_codes/sessions.
+        db.commit()
+        print(f"[bootstrap] updated password for existing admin '{username}'")
+        return 0
     finally:
         db.close()
-
-    # Создаём через cli.create_superadmin — там вся логика (школа + хеш + роль).
-    from cli import create_superadmin
-
-    create_superadmin(
-        db_url=db_url,
-        school_name=school,
-        username=username,
-        password=password,
-        full_name=full_name,
-    )
-    print(f"[bootstrap] created superadmin '{username}'")
-    return 0
 
 
 if __name__ == "__main__":
